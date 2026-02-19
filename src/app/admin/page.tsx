@@ -4,13 +4,15 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { Product, User } from '@/types';
+import { Product, User, Order } from '@/types';
 
 export default function AdminDashboard() {
+    const router = useRouter();
     const [activeTab, setActiveTab] = useState('overview');
     const [products, setProducts] = useState<Product[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [requests, setRequests] = useState<any[]>([]);
+    const [orders, setOrders] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [uploadingModel, setUploadingModel] = useState<string | null>(null); // User ID or Product ID being uploaded for
@@ -20,10 +22,36 @@ export default function AdminDashboard() {
         const fetchData = async () => {
             try {
                 setLoading(true);
-                const [productsRes, usersRes, requestsRes] = await Promise.all([
+                const { data: { session } } = await supabase.auth.getSession();
+
+                if (!session) {
+                    router.push('/');
+                    return;
+                }
+
+                // Verify Admin Role
+                const { data: userRole } = await supabase
+                    .from('users')
+                    .select('role')
+                    .eq('id', session.user.id)
+                    .single();
+
+                const isExplicitAdmin = session.user.email === 'marchmakers123@gmail.com';
+                const isAdminRole = userRole?.role === 'Admin';
+                const isLegacyAdmin = session.user.email?.includes('admin');
+
+                if (!isExplicitAdmin && !isAdminRole && !isLegacyAdmin) {
+                    router.push('/home'); // Redirect non-admins to home
+                    return;
+                }
+
+                const headers = { 'Authorization': `Bearer ${session.access_token}` };
+
+                const [productsRes, usersRes, requestsRes, ordersRes] = await Promise.all([
                     fetch('/api/products'),
                     fetch('/api/users'),
-                    supabase.from('try_on_requests').select('*')
+                    supabase.from('try_on_requests').select('*'),
+                    fetch('/api/orders?isAdmin=true', { headers })
                 ]);
 
                 if (!productsRes.ok || !usersRes.ok) throw new Error('Failed to fetch data');
@@ -31,6 +59,7 @@ export default function AdminDashboard() {
                 const productsData = await productsRes.json();
                 const usersData = await usersRes.json();
                 const requestsData = requestsRes.data || [];
+                const ordersData = ordersRes.ok ? await ordersRes.json() : [];
 
                 // Fetch updated user data (including model_url) from public users table
                 const { data: realtimeUsers, error: usersError } = await supabase
@@ -42,6 +71,7 @@ export default function AdminDashboard() {
                 setProducts(productsData);
                 setUsers(realtimeUsers || usersData);
                 setRequests(requestsData);
+                setOrders(Array.isArray(ordersData) ? ordersData : []);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {
@@ -115,7 +145,7 @@ export default function AdminDashboard() {
                     .from('product-models')
                     .upload(filePath, file, { upsert: true });
 
-                if (uploadError) throw uploadError;
+                if (uploadError) throw new Error(`Upload Error: ${uploadError.message}`);
 
                 const { data: { publicUrl } } = supabase.storage
                     .from('product-models')
@@ -124,22 +154,25 @@ export default function AdminDashboard() {
                 modelUrl = publicUrl;
             }
 
+            // Determine color based on category (consistency with Add Product)
+            const color = category === "Electronics" ? "from-blue-500 to-cyan-400" : "from-purple-500 to-pink-500";
+
             // Update Database
             const { error: updateError } = await supabase
                 .from('products')
-                .update({ name, price, category, model_url: modelUrl })
+                .update({ name, price, category, model_url: modelUrl, color })
                 .eq('id', editingProduct.id);
 
-            if (updateError) throw updateError;
+            if (updateError) throw new Error(`Database Error: ${updateError.message}`);
 
-            // Update Local State -- CRITICAL: Make sure to convert price to string/format as needed, type mismatch possible but ignoring for now
-            setProducts(products.map(p => p.id === editingProduct.id ? { ...p, name, price, category, model_url: modelUrl } : p));
+            // Update Local State
+            setProducts(products.map(p => p.id === editingProduct.id ? { ...p, name, price, category, model_url: modelUrl, color } : p));
             setEditingProduct(null); // Close modal
             alert('Product updated successfully!');
 
         } catch (err) {
             console.error(err);
-            alert('Failed to update product.');
+            alert('Failed to update product: ' + (err instanceof Error ? err.message : 'Unknown error'));
         } finally {
             setUploadingModel(null);
         }
@@ -196,21 +229,28 @@ export default function AdminDashboard() {
         const form = e.target as HTMLFormElement;
         const name = (form.elements.namedItem('name') as HTMLInputElement).value;
         const price = (form.elements.namedItem('price') as HTMLInputElement).value;
-        const category = (form.elements.namedItem('category') as HTMLInputElement).value;
+        const category = (form.elements.namedItem('category') as HTMLSelectElement).value;
 
         try {
-            const response = await fetch('/api/products', {
-                method: 'POST',
-                body: JSON.stringify({ name, price, category }),
-                headers: { 'Content-Type': 'application/json' },
-            });
+            const newProduct = {
+                name,
+                price,
+                category,
+                color: category === "Electronics" ? "from-blue-500 to-cyan-400" : "from-purple-500 to-pink-500"
+            };
 
-            if (!response.ok) throw new Error('Failed to add product');
+            const { data, error } = await supabase
+                .from('products')
+                .insert([newProduct])
+                .select();
 
-            const newProduct = await response.json();
-            setProducts([...products, newProduct]);
-            form.reset();
-            alert("Product Added Successfully!");
+            if (error) throw error;
+
+            if (data) {
+                setProducts([...products, data[0]]);
+                form.reset();
+                alert("Product Added Successfully!");
+            }
         } catch (err) {
             alert('Error adding product: ' + (err instanceof Error ? err.message : 'Unknown error'));
         }
@@ -232,6 +272,41 @@ export default function AdminDashboard() {
             } catch (err) {
                 alert('Error deleting product: ' + (err instanceof Error ? err.message : 'Unknown error'));
             }
+        }
+    };
+
+    const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+
+            if (!session) {
+                alert('Debug: No active session found in supabase client! Please refresh the page.');
+                return;
+            }
+
+            const token = session.access_token;
+            console.log('Debug: Token found:', token ? 'Yes' : 'No');
+
+            const response = await fetch('/api/orders', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ orderId, status: newStatus }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update status');
+            }
+
+            // Update local state
+            setOrders(orders.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+            alert('Order status updated successfully');
+        } catch (err) {
+            console.error(err);
+            alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
     };
 
@@ -467,6 +542,54 @@ export default function AdminDashboard() {
                         )}
                     </div>
                 );
+            case 'orders':
+                return (
+                    <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                        <h2 className="text-xl font-bold p-6 border-b border-white/10">Customer Orders</h2>
+                        {orders.length === 0 ? (
+                            <div className="p-8 text-center text-white/50">No orders found.</div>
+                        ) : (
+                            <table className="w-full text-left">
+                                <thead className="bg-white/5 text-white/60">
+                                    <tr>
+                                        <th className="px-6 py-4">Order ID</th>
+                                        <th className="px-6 py-4">User</th>
+                                        <th className="px-6 py-4">Total</th>
+                                        <th className="px-6 py-4">Status</th>
+                                        <th className="px-6 py-4">Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/10">
+                                    {orders.map((o) => (
+                                        <tr key={o.id} className="hover:bg-white/5">
+                                            <td className="px-6 py-4 text-white/60">
+                                                <span title={o.id} className="cursor-help">{o.id.substring(0, 8)}...</span>
+                                            </td>
+                                            <td className="px-6 py-4">{o.user_email || o.user_id}</td>
+                                            <td className="px-6 py-4 font-mono text-green-400">${o.total}</td>
+                                            <td className="px-6 py-4">
+                                                <select
+                                                    value={o.status}
+                                                    onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)}
+                                                    className={`px-2 py-1 rounded-full text-xs font-bold border-none focus:ring-2 focus:ring-purple-500 cursor-pointer bg-white/10 ${o.status === 'delivered' ? 'text-green-400' :
+                                                        o.status === 'shipped' ? 'text-blue-400' :
+                                                            o.status === 'cancelled' ? 'text-red-400' : 'text-yellow-400'
+                                                        }`}
+                                                >
+                                                    <option value="pending" className="bg-[#1a163b] text-yellow-400">PENDING</option>
+                                                    <option value="shipped" className="bg-[#1a163b] text-blue-400">SHIPPED</option>
+                                                    <option value="delivered" className="bg-[#1a163b] text-green-400">DELIVERED</option>
+                                                    <option value="cancelled" className="bg-[#1a163b] text-red-400">CANCELLED</option>
+                                                </select>
+                                            </td>
+                                            <td className="px-6 py-4 text-white/50">{new Date(o.created_at).toLocaleDateString()}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                );
             default: // Overview
                 return (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -477,6 +600,14 @@ export default function AdminDashboard() {
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
                             <p className="text-white/40 text-sm font-medium mb-2">Total Products</p>
                             <span className="text-3xl font-bold">{products.length}</span>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                            <p className="text-white/40 text-sm font-medium mb-2">Total Orders</p>
+                            <span className="text-3xl font-bold">{orders.length}</span>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                            <p className="text-white/40 text-sm font-medium mb-2">Pending Requests</p>
+                            <span className="text-3xl font-bold">{requests.filter(r => r.status === 'Pending').length}</span>
                         </div>
                     </div>
                 );
@@ -494,7 +625,7 @@ export default function AdminDashboard() {
                 </div>
 
                 <nav className="flex-1 p-4 space-y-2">
-                    {['Overview', 'Products', 'Users', 'Requests'].map((item) => (
+                    {['Overview', 'Products', 'Users', 'Requests', 'Orders'].map((item) => (
                         <button
                             key={item}
                             onClick={() => setActiveTab(item.toLowerCase())}

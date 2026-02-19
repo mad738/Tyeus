@@ -4,13 +4,14 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { Product } from '@/types';
 import { supabase } from '@/lib/supabaseClient';
+import { useCart } from '@/context/CartContext';
 
 export default function HomePage() {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [wishlist, setWishlist] = useState<number[]>([]);
-    const [cart, setCart] = useState<any[]>([]);
     const [user, setUser] = useState<any>(null);
+    const { addToCart, cartCount } = useCart();
 
     useEffect(() => {
         const fetchUserAndData = async () => {
@@ -35,14 +36,6 @@ export default function HomePage() {
                     if (wishlistData) {
                         setWishlist(wishlistData.map((item: any) => item.product_id));
                     }
-
-                    // 4. Fetch Cart
-                    const { data: cartData } = await supabase
-                        .from('cart')
-                        .select('*')
-                        .eq('user_id', user.id);
-
-                    if (cartData) setCart(cartData);
                 }
             } catch (err) {
                 console.error(err);
@@ -85,46 +78,21 @@ export default function HomePage() {
         }
     };
 
-    const addToCart = async (product: Product) => {
-        if (!user) {
-            alert('Please login to add to cart');
-            return;
-        }
-
-        try {
-            // Check if item exists in cart
-            const existingItem = cart.find(item => item.product_id === product.id);
-
-            if (existingItem) {
-                // Update quantity
-                const newQuantity = existingItem.quantity + 1;
-                const { error } = await supabase
-                    .from('cart')
-                    .update({ quantity: newQuantity })
-                    .eq('id', existingItem.id);
-
-                if (error) throw error;
-
-                setCart(cart.map(item => item.id === existingItem.id ? { ...item, quantity: newQuantity } : item));
-            } else {
-                // Insert new
-                const { data, error } = await supabase
-                    .from('cart')
-                    .insert({ user_id: user.id, product_id: product.id, quantity: 1 })
-                    .select()
-                    .single();
-
-                if (error) throw error;
-                if (data) setCart([...cart, data]);
-            }
-            alert('Added to Cart!');
-        } catch (error) {
-            console.error('Error adding to cart:', error);
-            alert('Failed to add to cart');
-        }
+    const handleAddToCart = async (product: Product) => {
+        await addToCart(product);
+        alert('Added to Cart!');
     };
 
-    const cartCount = cart.reduce((acc, item) => acc + (item.quantity || 1), 0);
+    const [selectedCategory, setSelectedCategory] = useState('All Products');
+
+    // Filter logic
+    const filteredProducts = selectedCategory === 'All Products'
+        ? products
+        : products.filter(product => product.category === selectedCategory);
+
+    const scrollToProducts = () => {
+        document.getElementById('product-grid')?.scrollIntoView({ behavior: 'smooth' });
+    };
 
     return (
         <div className="min-h-screen bg-[#0f0c29] text-white font-sans selection:bg-purple-500/30">
@@ -146,6 +114,7 @@ export default function HomePage() {
                                 <span>Virtual Try-On</span>
                                 <span className="absolute -top-3 -right-3 text-[9px] bg-gradient-to-r from-pink-500 to-purple-500 px-1.5 py-0.5 rounded-full">NEW</span>
                             </Link>
+                            <Link href="/cart" className="text-white/70 hover:text-purple-300 transition-colors font-medium">Cart</Link>
                         </div>
 
                         <div className="hidden md:block flex-1 max-w-sm mx-8">
@@ -162,16 +131,18 @@ export default function HomePage() {
                         </div>
 
                         <div className="flex items-center gap-4">
-                            <button className="p-2 hover:bg-white/10 rounded-full transition-colors relative">
-                                <svg className="w-6 h-6 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                                </svg>
-                                {cartCount > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-purple-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[#0f0c29]">
-                                        {cartCount}
-                                    </span>
-                                )}
-                            </button>
+                            <Link href="/cart">
+                                <button className="p-2 hover:bg-white/10 rounded-full transition-colors relative">
+                                    <svg className="w-6 h-6 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                    </svg>
+                                    {cartCount > 0 && (
+                                        <span className="absolute -top-1 -right-1 bg-purple-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[#0f0c29]">
+                                            {cartCount}
+                                        </span>
+                                    )}
+                                </button>
+                            </Link>
 
                             <Link href="/profile">
                                 <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 p-[2px] cursor-pointer hover:shadow-lg hover:shadow-purple-500/30 transition-shadow">
@@ -199,7 +170,10 @@ export default function HomePage() {
                             <span className="inline-block py-1 px-3 rounded-full bg-white/10 border border-white/20 text-xs font-semibold tracking-wide text-purple-300 mb-4">NEW COLLECTION</span>
                             <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6">Future Tech <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">Arrived Today</span></h1>
                             <p className="text-lg text-white/70 mb-8 max-w-md mx-auto md:mx-0">Experience the next generation of gadgets with our exclusive holographic series.</p>
-                            <button className="px-8 py-3 bg-white text-purple-900 font-bold rounded-xl shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] transform hover:-translate-y-1 transition-all duration-300">
+                            <button
+                                onClick={scrollToProducts}
+                                className="px-8 py-3 bg-white text-purple-900 font-bold rounded-xl shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] transform hover:-translate-y-1 transition-all duration-300"
+                            >
                                 Explore Now
                             </button>
                         </div>
@@ -219,7 +193,8 @@ export default function HomePage() {
                     {['All Products', 'Electronics', 'Fashion', 'Gaming', 'Home'].map((cat, i) => (
                         <button
                             key={cat}
-                            className={`px-6 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-all ${i === 0 ? 'bg-white text-black' : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/5'}`}
+                            onClick={() => setSelectedCategory(cat)}
+                            className={`px-6 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-all ${selectedCategory === cat ? 'bg-white text-black' : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/5'}`}
                         >
                             {cat}
                         </button>
@@ -231,14 +206,14 @@ export default function HomePage() {
                     <div className="flex justify-center items-center py-20">
                         <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
                     </div>
-                ) : products.length === 0 ? (
+                ) : filteredProducts.length === 0 ? (
                     <div className="text-center py-20 text-white/50">
-                        <p className="text-xl">No products available at the moment.</p>
-                        <p className="text-sm mt-2">Check back later or visit the admin panel to add some!</p>
+                        <p className="text-xl">No products found in this category.</p>
+                        <p className="text-sm mt-2">Try selecting 'All Products' or check back later.</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {products.map((product) => (
+                    <div id="product-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                        {filteredProducts.map((product) => (
                             <div key={product.id} className="group bg-white/5 border border-white/10 rounded-2xl p-4 hover:bg-white/10 transition-all duration-300 hover:-translate-y-1">
                                 {/* Product Image Placeholder */}
                                 <div className={`h-64 rounded-xl bg-gradient-to-br ${product.color || 'from-gray-700 to-gray-900'} relative overflow-hidden mb-4 group-hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] transition-all`}>
@@ -263,7 +238,7 @@ export default function HomePage() {
                                     </div>
 
                                     <button
-                                        onClick={() => addToCart(product)}
+                                        onClick={() => handleAddToCart(product)}
                                         className="w-full py-2.5 mt-2 bg-white/10 hover:bg-white text-white hover:text-black font-medium rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
                                     >
                                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

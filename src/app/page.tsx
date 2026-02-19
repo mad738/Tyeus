@@ -25,9 +25,22 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      // Check if admin (simple check, ideally check role in db)
-      if (email.toLowerCase().includes('admin')) {
-        router.push('/admin');
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Check for specific admin email or role
+      if (user?.email === 'marchmakers123@gmail.com' || email.toLowerCase().includes('admin')) {
+        // Double check database role to be sure
+        const { data: userData } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', user?.id)
+          .single();
+
+        if (userData?.role === 'Admin' || user?.email === 'marchmakers123@gmail.com') {
+          router.push('/admin');
+        } else {
+          router.push('/home');
+        }
       } else {
         router.push('/home');
       }
@@ -98,7 +111,7 @@ export default function LoginPage() {
           <div className="space-y-2">
             <div className="flex justify-between items-center ml-1">
               <label htmlFor="password" className="text-xs font-medium text-white/80 uppercase tracking-wider">Password</label>
-              <Link href="#" className="text-xs text-purple-300 hover:text-purple-200 transition-colors">Forgot?</Link>
+              <Link href="/forgot-password" className="text-xs text-purple-300 hover:text-purple-200 transition-colors">Forgot?</Link>
             </div>
             <div className="relative group">
               <input

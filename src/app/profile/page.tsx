@@ -157,7 +157,14 @@ export default function ProfilePage() {
                             </div>
                         </form>
 
-                        <div className="mt-8 pt-8 border-t border-white/10">
+                        <div className="mt-8 pt-8 border-t border-white/10 space-y-4">
+                            <Link
+                                href="/orders"
+                                className="block w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold rounded-xl shadow-lg transition-all text-center hover:scale-[1.02]"
+                            >
+                                View My Orders
+                            </Link>
+
                             <button
                                 onClick={async () => {
                                     await supabase.auth.signOut();

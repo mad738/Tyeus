@@ -1,33 +1,106 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { useGLTF, OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
+import React from 'react';
 
-function Model({ url }: { url: string }) {
-    const { scene } = useGLTF(url);
-    const ref = useRef<THREE.Group>(null);
+// --- 3D Components ---
 
-    // Auto-rotate
-    useFrame((state) => {
-        if (ref.current) {
-            ref.current.rotation.y += 0.005;
-        }
-    });
-
-    return <primitive object={scene} ref={ref} scale={2.5} position={[0, -2.5, 0]} />;
+// Error Boundary
+class ModelErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode }, { hasError: boolean }> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false };
+    }
+    static getDerivedStateFromError(error: any) { return { hasError: true }; }
+    componentDidCatch(error: any, errorInfo: any) { console.error("3D Model Error:", error, errorInfo); }
+    render() {
+        if (this.state.hasError) return this.props.fallback;
+        return this.props.children;
+    }
 }
 
+// Full Avatar Group (Human + Product)
+// Grouping ensures they share the exact same origin/transform
+function AvatarGroup({ userUrl, productUrl }: { userUrl?: string | null, productUrl?: string | null }) {
+    return (
+        <group>
+            {/* HUMAN: Always visible */}
+            <Suspense fallback={<HumanPlaceholder />}>
+                <ModelErrorBoundary fallback={<HumanPlaceholder />}>
+                    <HumanModel url={userUrl || undefined} />
+                </ModelErrorBoundary>
+            </Suspense>
+
+            {/* SHIRT: Only visible when URL is present */}
+            {productUrl && (
+                <Suspense fallback={<ProductPlaceholder />}>
+                    <ModelErrorBoundary fallback={<ProductPlaceholder />}>
+                        <ProductModel url={productUrl} />
+                    </ModelErrorBoundary>
+                </Suspense>
+            )}
+        </group>
+    )
+}
+
+// Human Model
+function HumanModel({ url }: { url?: string }) {
+    // Fix 404: If no custom URL is provided, do NOT try to fetch '/human_body.glb' (it is missing).
+    // Just return the placeholder geometry directly.
+    if (!url) {
+        return (
+            <mesh position={[0, -2.5, 0]}>
+                <capsuleGeometry args={[0.8, 3.5, 4]} />
+                <meshStandardMaterial color="#e0e0e0" />
+            </mesh>
+        );
+    }
+
+    const { scene } = useGLTF(url);
+    // Clone to avoid sharing state if multiple instances (though unlikely here)
+    const sceneClone = React.useMemo(() => scene.clone(), [scene]);
+    // Remove manual position/scale to rely on Blender export
+    return <primitive object={sceneClone} />;
+}
+
+function ProductModel({ url }: { url: string }) {
+    const { scene } = useGLTF(url);
+    // Remove manual scale to rely on Blender export
+    return <primitive object={scene} />;
+}
+
+// Placeholders (Scaled to match parent group)
+function HumanPlaceholder() {
+    return (
+        <mesh position={[0, 1, 0]}>
+            <capsuleGeometry args={[0.3, 1.4, 4]} />
+            <meshStandardMaterial color="#e0e0e0" />
+        </mesh>
+    )
+}
+function ProductPlaceholder() {
+    return (
+        <mesh position={[0, 1.2, 0.1]}>
+            <boxGeometry args={[0.4, 0.4, 0.4]} />
+            <meshStandardMaterial color="purple" />
+        </mesh>
+    )
+}
+
+// --- Main Page Component ---
+
 export default function VirtualTryOnPage() {
-    const [modelUrl, setModelUrl] = useState<string | null>(null);
+    // State
+    const [userModelUrl, setUserModelUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [userId, setUserId] = useState<string | null>(null);
-    const [wishlist, setWishlist] = useState<any[]>([]); // New State for Wishlist
-    const [selectedProductModel, setSelectedProductModel] = useState<string | null>(null); // For product try-on
+    const [wishlist, setWishlist] = useState<any[]>([]);
+    const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -40,8 +113,6 @@ export default function VirtualTryOnPage() {
                     return;
                 }
 
-                setUserId(user.id);
-
                 // 1. Fetch User Model
                 const { data: userData } = await supabase
                     .from('users')
@@ -49,11 +120,9 @@ export default function VirtualTryOnPage() {
                     .eq('id', user.id)
                     .single();
 
-                if (userData?.model_url) {
-                    setModelUrl(userData.model_url);
-                }
+                if (userData?.model_url) setUserModelUrl(userData.model_url);
 
-                // 2. Fetch Wishlist (Products with models)
+                // 2. Fetch Wishlist
                 const { data: wishlistData } = await supabase
                     .from('wishlist')
                     .select(`
@@ -69,13 +138,10 @@ export default function VirtualTryOnPage() {
                     .eq('user_id', user.id);
 
                 if (wishlistData) {
-                    // Supabase join might return an array or object depending on relation type. 
-                    // Safely handle both or cast.
                     const products = wishlistData.map(item => {
                         const prod = item.product;
                         return Array.isArray(prod) ? prod[0] : prod;
-                    }).filter((p: any) => p && p.model_url);
-
+                    }).filter((p: any) => p);
                     setWishlist(products);
                 }
 
@@ -86,16 +152,14 @@ export default function VirtualTryOnPage() {
                 setLoading(false);
             }
         };
-
         fetchData();
     }, []);
 
-    // Helper to toggle product model
-    const toggleProductModel = (url: string) => {
-        if (selectedProductModel === url) {
-            setSelectedProductModel(null); // Revert to user avatar
+    const toggleProduct = (product: any) => {
+        if (selectedProduct?.id === product.id) {
+            setSelectedProduct(null); // Take off
         } else {
-            setSelectedProductModel(url); // Show product
+            setSelectedProduct(product); // Put on
         }
     };
 
@@ -116,8 +180,7 @@ export default function VirtualTryOnPage() {
             </nav>
 
             <main className="pt-24 min-h-screen flex relative overflow-hidden">
-
-                {/* Wishlist Sidebar / Drawer */}
+                {/* Wishlist Sidebar */}
                 <div className="absolute left-4 top-24 bottom-4 w-64 bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl z-20 flex flex-col overflow-hidden">
                     <div className="p-4 border-b border-white/10">
                         <h2 className="font-bold text-white/90">My Wishlist</h2>
@@ -126,14 +189,14 @@ export default function VirtualTryOnPage() {
                     <div className="flex-1 overflow-y-auto p-2 space-y-2">
                         {wishlist.length === 0 ? (
                             <div className="text-center py-8 text-white/30 text-sm">
-                                No items with 3D models in wishlist.
+                                Your wishlist is empty.
                             </div>
                         ) : (
                             wishlist.map((product) => (
                                 <button
                                     key={product.id}
-                                    onClick={() => toggleProductModel(product.model_url)}
-                                    className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3 ${selectedProductModel === product.model_url
+                                    onClick={() => toggleProduct(product)}
+                                    className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3 ${selectedProduct?.id === product.id
                                         ? 'bg-purple-500/20 border-purple-500/50 shadow-lg shadow-purple-500/10'
                                         : 'bg-white/5 border-white/5 hover:bg-white/10'
                                         }`}
@@ -143,6 +206,9 @@ export default function VirtualTryOnPage() {
                                         <p className="text-sm font-medium text-white/90 truncate">{product.name}</p>
                                         <p className="text-xs text-white/50">{product.price}</p>
                                     </div>
+                                    <div className="ml-auto text-xs text-white/50">
+                                        {selectedProduct?.id === product.id ? "On" : "Off"}
+                                    </div>
                                 </button>
                             ))
                         )}
@@ -151,68 +217,74 @@ export default function VirtualTryOnPage() {
 
                 {/* Main 3D Area */}
                 <div className="flex-1 flex flex-col items-center justify-center relative">
-                    {/* Background Elements */}
+                    {/* Background */}
                     <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
                         <div className="absolute top-[20%] left-[20%] w-96 h-96 bg-purple-600 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob"></div>
                         <div className="absolute top-[20%] right-[20%] w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000"></div>
                     </div>
 
                     <div className="relative z-10 w-full h-full flex flex-col items-center justify-center">
+                        {/* Debug Info */}
+                        <div className="absolute top-4 right-4 z-50 bg-black/50 text-white p-2 text-xs rounded pointer-events-none">
+                            <p>User Model: {userModelUrl ? "Custom" : "Default"}</p>
+                            <p>Product: {selectedProduct ? selectedProduct.name : "None"}</p>
+                        </div>
+
                         <h1 className="text-3xl md:text-4xl font-bold mb-4 text-center bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 absolute top-0 mt-4">
-                            {selectedProductModel ? 'Trying Product' : 'Your Virtual Avatar'}
+                            {selectedProduct ? 'Trying Product' : 'Your Virtual Avatar'}
                         </h1>
 
-                        {loading ? (
-                            <div className="text-white/50 animate-pulse text-lg">Loading...</div>
-                        ) : error ? (
-                            <div className="text-red-400 bg-red-500/10 px-6 py-4 rounded-xl">{error}</div>
-                        ) : (modelUrl || selectedProductModel) ? (
-                            <div className="w-full h-full max-h-[80vh] aspect-[4/3] max-w-5xl">
-                                <Canvas shadows camera={{ position: [0, 0, 4], fov: 45 }}>
-                                    <ambientLight intensity={0.6} />
-                                    <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} shadow-mapSize={2048} castShadow />
+                        <div className="w-full max-w-4xl aspect-[4/3] relative group">
+                            {/* Frame Container */}
+                            <div className="absolute inset-0 bg-white/5 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl overflow-hidden">
+
+                                {/* Inner Shadow for Depth */}
+                                <div className="absolute inset-0 shadow-[inset_0_0_50px_rgba(0,0,0,0.5)] pointer-events-none z-10 rounded-3xl" />
+
+                                <Canvas shadows camera={{ position: [0, 0, 4.5], fov: 40 }} className="rounded-3xl cursor-grab active:cursor-grabbing">
+                                    <color attach="background" args={['#000000']} />
+                                    <ambientLight intensity={0.7} />
+                                    <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} shadow-mapSize={2048} castShadow intensity={1.5} />
                                     <Environment preset="city" />
 
-                                    {/* Load Selected Product Model OR User Model */}
-                                    <Model url={selectedProductModel || modelUrl!} />
+                                    {/* STAGE: Circular platform at feet */}
+                                    <mesh receiveShadow position={[0, -0.1, 0]}>
+                                        <cylinderGeometry args={[2.5, 2.5, 0.2, 64]} />
+                                        <meshStandardMaterial color="#1a1a1a" roughness={0.8} metalness={0.2} />
+                                    </mesh>
 
-                                    <ContactShadows position={[0, -2.5, 0]} opacity={0.5} scale={10} blur={1} far={10} resolution={256} color="#000000" />
+                                    {/* AVATAR GROUP: Contains Human + Product with shared scaling/position */}
+                                    <AvatarGroup
+                                        userUrl={userModelUrl}
+                                        productUrl={selectedProduct?.model_url}
+                                    />
+
+                                    <ContactShadows position={[0, 0.01, 0]} opacity={0.6} scale={10} blur={2} far={4} resolution={256} color="#000000" />
+
                                     <OrbitControls
                                         minPolarAngle={Math.PI / 4}
-                                        maxPolarAngle={Math.PI / 1.5}
+                                        maxPolarAngle={Math.PI / 2} // Don't allow going below the floor
+                                        minAzimuthAngle={-Math.PI / 1.5} // Limit horizontal rotation
+                                        maxAzimuthAngle={Math.PI / 1.5}
                                         enableZoom={true}
-                                        enablePan={false}
-                                        minDistance={2}
-                                        maxDistance={10}
+                                        enablePan={false} // Important: prevents moving the model out of frame
+                                        minDistance={2.5}
+                                        maxDistance={6}
+                                        target={[0, 0.8, 0]} // Focus on the center of the body (approx chest/waist)
                                     />
                                 </Canvas>
-                                <div className="absolute bottom-6 left-0 w-full text-center pointer-events-none">
-                                    <p className="text-white/40 text-sm">
-                                        {selectedProductModel ? 'Viewing Product Model' : 'Viewing Your Avatar'} • Drag to rotate
+
+                                {/* Instruction Overlay */}
+                                <div className="absolute bottom-6 left-0 w-full text-center pointer-events-none z-20">
+                                    <p className="text-white/40 text-sm font-medium tracking-wide uppercase">
+                                        {selectedProduct ? 'Viewing Product Model' : 'Viewing Your Avatar'} • Drag to rotate
                                     </p>
                                 </div>
                             </div>
-                        ) : (
-                            // Empty State (No Model)
-                            <div className="text-center bg-white/5 border border-white/10 p-12 rounded-3xl backdrop-blur-md max-w-lg">
-                                {/* ... (Same as before) ... */}
-                                <div className="w-20 h-20 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl">🤷‍♂️</div>
-                                <h2 className="text-2xl font-bold mb-3">No Model Found</h2>
-                                <p className="text-white/60 mb-8 leading-relaxed">
-                                    You haven't been assigned a personalized 3D model yet.
-                                    Please submit a request with your photos so our team can generate one for you.
-                                </p>
-                                <Link
-                                    href="/request-try-on"
-                                    className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl shadow-lg shadow-purple-900/20 transform transition-all hover:scale-105"
-                                >
-                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                    </svg>
-                                    Request Model Now
-                                </Link>
-                            </div>
-                        )}
+
+                            {/* Decorative framing elements outside */}
+                            <div className="absolute -inset-1 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-[2rem] blur opacity-50 -z-10 group-hover:opacity-75 transition duration-1000"></div>
+                        </div>
                     </div>
                 </div>
             </main>
