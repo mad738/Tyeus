@@ -302,7 +302,7 @@ export default function AdminDashboard() {
             }
 
             // Update local state
-            setOrders(orders.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+            setOrders(orders.map(o => o.id === orderId ? { ...o, status: newStatus as Order['status'] } : o));
             alert('Order status updated successfully');
         } catch (err) {
             console.error(err);

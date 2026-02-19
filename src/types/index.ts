@@ -15,13 +15,14 @@ export interface User {
     role: string;
     joined: string;
     created_at?: string;
+    model_url?: string;
 }
 
 export interface Order {
     id: string;
     user_id: string;
     total: number;
-    status: 'pending' | 'processing' | 'completed' | 'cancelled';
+    status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'completed' | 'cancelled';
     created_at: string;
     items?: OrderItem[];
     user_email?: string;
