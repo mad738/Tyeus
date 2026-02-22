@@ -96,7 +96,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
             console.log("Connected! Generating image in your browser (no timeout)...");
 
-            // 4. Run the Prediction directly
+            // 4. Run the Prediction directly (High Fidelity Mode)
             const result = await app.predict('/tryon', {
                 dict: {
                     background: humanBlob,
@@ -104,10 +104,11 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                     composite: null
                 },
                 garm_img: productBlob,
-                garment_des: 'shirt',
+                // Use a realistic description for natural texture preservation
+                garment_des: 'A natural high-quality photorealistic garment on a human body',
                 is_checked: true,
                 is_checked_crop: false,
-                denoise_steps: 30,
+                denoise_steps: 50, // Higher steps = more natural texture preservation
                 seed: 42
             });
 
