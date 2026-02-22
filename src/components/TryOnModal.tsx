@@ -74,7 +74,12 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
         setStatusMessage("Initializing AI...");
 
         // List of IDM-VTON spaces to try in order (Fallbacks)
-        const spaces = ['yisol/IDM-VTON', 'AI-Platform/IDM-VTON', 'jjlealse/IDM-VTON'];
+        const spaces = [
+            'yisol/IDM-VTON',
+            'AI-Platform/IDM-VTON',
+            'jjlealse/IDM-VTON',
+            'yisol/IDM-VTON-DC'
+        ];
 
         try {
             // 1. Prepare User Photo
@@ -100,14 +105,18 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
             for (const space of spaces) {
                 try {
-                    setStatusMessage(`Connecting to Space: ${space.split('/')[0]}...`);
-                    const app = await client(space);
+                    setStatusMessage(`Connecting to Server: ${space.split('/')[0]}...`);
+                    // Timeout the connection attempt after 15 seconds
+                    const app = await Promise.race([
+                        client(space),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 15000))
+                    ]) as any;
 
-                    setStatusMessage(`Joined Queue: ${space.split('/')[0]}`);
+                    setStatusMessage(`Joined Queue on ${space.split('/')[0]}`);
 
                     // 4. Run the Prediction
                     await new Promise((resolve, reject) => {
-                        const submission = app.submit('/tryon', {
+                        const submission: any = app.submit('/tryon', {
                             dict: { background: humanBlob, layers: [], composite: null },
                             garm_img: productBlob,
                             garment_des: 'A natural high-quality photorealistic garment on a human body',
@@ -117,7 +126,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                             seed: 42
                         });
 
-                        submission.on('status', (status) => {
+                        submission.on('status', (status: any) => {
                             if (status.stage === 'pending') {
                                 setStatusMessage(`Queue: ${status.position || 0}/${status.size || '?'}`);
                             } else if (status.stage === 'error') {
@@ -137,7 +146,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                             }
                         });
 
-                        submission.on('error', (err) => reject(err));
+                        submission.on('error', (err: any) => reject(err));
                     });
 
                     // If we reach here, we succeeded!
@@ -159,9 +168,9 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
             console.error("TRY-ON GLOBAL ERROR:", err);
             const msg = (err.message || '').toLowerCase();
             if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('queue') || msg.includes('quota')) {
-                setError("All AI servers are currently at capacity. Please wait 1 minute and click Initiate again.");
+                setError("All AI servers are currently at capacity. This is normal for the free tier. Please wait 1-2 minutes and click Initiate again.");
             } else {
-                setError(err.message || "Something went wrong. Please try refreshing.");
+                setError(`Connection Error: ${err.message || "Something went wrong"}. Please try again.`);
             }
             setGenerating(false);
             setStatusMessage(null);
@@ -194,7 +203,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                                     {/* Scanning Animation */}
                                     <div className="absolute top-0 left-0 w-full h-1 bg-neon-cyan shadow-[0_0_15px_#0ff] animate-scan"></div>
                                     <div className="text-white font-bold tracking-widest uppercase animate-pulse text-xs">
-                                        {statusMessage || "Running AI Model..."}
+                                        {statusMessage || "Running Engine..."}
                                     </div>
                                 </div>
                             )}
@@ -262,7 +271,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                                 </div>
                             ) : (
                                 <div className="z-10 text-center px-6">
-                                    <p className="text-white/40 text-sm mb-6">Upload your photo to see this item equipped using Gemini 3.1 Pro AI.</p>
+                                    <p className="text-white/40 text-sm mb-6">Upload your photo to see this item equipped using IDM-VTON Engine.</p>
                                     <button
                                         onClick={handleTryOn}
                                         disabled={!userPhotoFile && !userPhotoUrl}
