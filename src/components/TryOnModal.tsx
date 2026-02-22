@@ -73,6 +73,9 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
         setError(null);
         setStatusMessage("Initializing AI...");
 
+        // List of IDM-VTON spaces to try in order (Fallbacks)
+        const spaces = ['yisol/IDM-VTON', 'AI-Platform/IDM-VTON', 'jjlealse/IDM-VTON'];
+
         try {
             // 1. Prepare User Photo
             let humanBlob: Blob;
@@ -93,62 +96,73 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
             // 3. Import Gradio Client dynamically
             const { client } = await import('@gradio/client');
 
-            setStatusMessage("Connecting to Hugging Face...");
-            const app = await client('yisol/IDM-VTON');
+            let lastError: any = null;
 
-            // 4. Run the Prediction using .submit() to track queue
-            return new Promise((resolve, reject) => {
-                const submission = app.submit('/tryon', {
-                    dict: {
-                        background: humanBlob,
-                        layers: [],
-                        composite: null
-                    },
-                    garm_img: productBlob,
-                    garment_des: 'A natural high-quality photorealistic garment on a human body',
-                    is_checked: true,
-                    is_checked_crop: false,
-                    denoise_steps: 30,
-                    seed: 42
-                });
+            for (const space of spaces) {
+                try {
+                    setStatusMessage(`Connecting to Space: ${space.split('/')[0]}...`);
+                    const app = await client(space);
 
-                submission.on('status', (status) => {
-                    if (status.stage === 'pending') {
-                        setStatusMessage(`Queue Position: ${status.position || 0}/${status.size || '?'}`);
-                    } else if (status.stage === 'error') {
-                        reject(new Error("The AI Space is overloaded. Please try again in 1-2 minutes."));
-                    } else if (status.stage === 'complete') {
-                        // handled in data event
-                    } else {
-                        setStatusMessage("Processing Image...");
-                    }
-                });
+                    setStatusMessage(`Joined Queue: ${space.split('/')[0]}`);
 
-                submission.on('data', (data) => {
-                    const outputData: any = data.data;
-                    const finalImageUrl = outputData?.[0]?.url || null;
-                    if (finalImageUrl) {
-                        setResultImageUrl(finalImageUrl);
-                        resolve(finalImageUrl);
-                    } else {
-                        reject(new Error("AI finished but returned no image."));
-                    }
-                });
+                    // 4. Run the Prediction
+                    await new Promise((resolve, reject) => {
+                        const submission = app.submit('/tryon', {
+                            dict: { background: humanBlob, layers: [], composite: null },
+                            garm_img: productBlob,
+                            garment_des: 'A natural high-quality photorealistic garment on a human body',
+                            is_checked: true,
+                            is_checked_crop: false,
+                            denoise_steps: 30,
+                            seed: 42
+                        });
 
-                submission.on('error', (err) => {
-                    reject(err);
-                });
-            });
+                        submission.on('status', (status) => {
+                            if (status.stage === 'pending') {
+                                setStatusMessage(`Queue: ${status.position || 0}/${status.size || '?'}`);
+                            } else if (status.stage === 'error') {
+                                reject(new Error("Space busy. Trying fallback..."));
+                            } else {
+                                setStatusMessage(`Processing on ${space.split('/')[0]}...`);
+                            }
+                        });
+
+                        submission.on('data', (data: any) => {
+                            const finalImageUrl = data.data?.[0]?.url || null;
+                            if (finalImageUrl) {
+                                setResultImageUrl(finalImageUrl);
+                                resolve(finalImageUrl);
+                            } else {
+                                reject(new Error("No image generated."));
+                            }
+                        });
+
+                        submission.on('error', (err) => reject(err));
+                    });
+
+                    // If we reach here, we succeeded!
+                    setGenerating(false);
+                    setStatusMessage(null);
+                    return;
+
+                } catch (spaceErr) {
+                    console.warn(`Space ${space} failed:`, spaceErr);
+                    lastError = spaceErr;
+                    // Continue to next space in loop
+                }
+            }
+
+            // If we've exhausted all spaces
+            throw lastError || new Error("All AI servers are currently busy.");
 
         } catch (err: any) {
-            console.error("TRY-ON ERROR:", err);
+            console.error("TRY-ON GLOBAL ERROR:", err);
             const msg = (err.message || '').toLowerCase();
-            if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('pending')) {
-                setError("The AI Space is currently busy. Please wait 1-2 minutes and try again.");
+            if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('queue') || msg.includes('quota')) {
+                setError("All AI servers are currently at capacity. Please wait 1 minute and click Initiate again.");
             } else {
-                setError(err instanceof Error ? err.message : 'Something went wrong with the AI Space.');
+                setError(err.message || "Something went wrong. Please try refreshing.");
             }
-        } finally {
             setGenerating(false);
             setStatusMessage(null);
         }
