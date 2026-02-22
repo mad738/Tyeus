@@ -6,7 +6,22 @@ export interface Product {
     model_url?: string; // URL to the .glb file
     color?: string; // specific color class for the card background
     stock?: number;
+    main_image?: string; // Single main image for homepage
+    images?: string[]; // Array of image URLs for gallery
+    description?: string; // Product description
+    is_hidden?: boolean; // Controls visibility on user pages
 }
+
+export interface Review {
+    id: number;
+    created_at: string;
+    product_id: number;
+    user_id: string;
+    rating: number;
+    comment?: string;
+    user?: User;
+}
+
 
 export interface User {
     id: string;

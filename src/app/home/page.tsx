@@ -5,38 +5,24 @@ import { useState, useEffect } from 'react';
 import { Product } from '@/types';
 import { supabase } from '@/lib/supabaseClient';
 import { useCart } from '@/context/CartContext';
+import { useRouter } from 'next/navigation';
 
 export default function HomePage() {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
-    const [wishlist, setWishlist] = useState<number[]>([]);
-    const [user, setUser] = useState<any>(null);
-    const { addToCart, cartCount } = useCart();
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const { cartCount } = useCart();
+    const router = useRouter();
 
     useEffect(() => {
         const fetchUserAndData = async () => {
             setLoading(true);
             try {
-                // 1. Get User
-                const { data: { user } } = await supabase.auth.getUser();
-                setUser(user);
-
-                // 2. Fetch Products
+                // Fetch Products
                 const itemsRes = await fetch('/api/products');
                 const itemsData = await itemsRes.json();
-                if (Array.isArray(itemsData)) setProducts(itemsData);
-
-                if (user) {
-                    // 3. Fetch Wishlist
-                    const { data: wishlistData } = await supabase
-                        .from('wishlist')
-                        .select('product_id')
-                        .eq('user_id', user.id);
-
-                    if (wishlistData) {
-                        setWishlist(wishlistData.map((item: any) => item.product_id));
-                    }
-                }
+                if (Array.isArray(itemsData)) setProducts(itemsData.filter((p: any) => !p.is_hidden));
             } catch (err) {
                 console.error(err);
             } finally {
@@ -47,219 +33,178 @@ export default function HomePage() {
         fetchUserAndData();
     }, []);
 
-    const toggleWishlist = async (productId: number) => {
-        if (!user) {
-            alert('Please login to use wishlist');
-            return;
-        }
-
-        const isWished = wishlist.includes(productId);
-
-        try {
-            if (isWished) {
-                // Remove
-                await supabase
-                    .from('wishlist')
-                    .delete()
-                    .eq('user_id', user.id)
-                    .eq('product_id', productId);
-
-                setWishlist(prev => prev.filter(id => id !== productId));
-            } else {
-                // Add
-                await supabase
-                    .from('wishlist')
-                    .insert({ user_id: user.id, product_id: productId });
-
-                setWishlist(prev => [...prev, productId]);
-            }
-        } catch (error) {
-            console.error('Error updating wishlist:', error);
-        }
-    };
-
-    const handleAddToCart = async (product: Product) => {
-        await addToCart(product);
-        alert('Added to Cart!');
-    };
-
-    const [selectedCategory, setSelectedCategory] = useState('All Products');
-
     // Filter logic
-    const filteredProducts = selectedCategory === 'All Products'
-        ? products
-        : products.filter(product => product.category === selectedCategory);
-
-    const scrollToProducts = () => {
-        document.getElementById('product-grid')?.scrollIntoView({ behavior: 'smooth' });
-    };
+    const filteredProducts = products.filter(product => {
+        return product.name.toLowerCase().includes(searchQuery.toLowerCase());
+    });
 
     return (
-        <div className="min-h-screen bg-[#0f0c29] text-white font-sans selection:bg-purple-500/30">
+        <div className="min-h-screen bg-[#fafafa] text-gray-800 font-sans pb-20">
+            {/* Top Navigation */}
+            <nav className="bg-white px-4 py-4 flex items-center justify-between sticky top-0 z-50">
+                <button onClick={() => setIsMenuOpen(true)} className="text-gray-800 p-2 -ml-2" aria-label="Menu">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </button>
 
-            {/* Navbar */}
-            <nav className="fixed top-0 w-full z-50 bg-[#0f0c29]/80 backdrop-blur-xl border-b border-white/10">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex items-center justify-between h-16">
-                        <div className="flex-shrink-0 font-bold text-2xl tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600 mr-8">
-                            NEBULA<span className="text-white">STORE</span>
-                        </div>
-
-                        {/* Menu Links */}
-                        <div className="hidden md:flex items-center space-x-8">
-                            <Link href="/home" className="text-white hover:text-purple-300 transition-colors font-medium">Home</Link>
-                            <Link href="/product" className="text-white/70 hover:text-white transition-colors font-medium">Product</Link>
-                            <Link href="/request-try-on" className="text-white/70 hover:text-white transition-colors font-medium">Request Try-On</Link>
-                            <Link href="/virtual-try-on" className="text-white/70 hover:text-purple-300 transition-colors font-medium relative group">
-                                <span>Virtual Try-On</span>
-                                <span className="absolute -top-3 -right-3 text-[9px] bg-gradient-to-r from-pink-500 to-purple-500 px-1.5 py-0.5 rounded-full">NEW</span>
-                            </Link>
-                            <Link href="/cart" className="text-white/70 hover:text-purple-300 transition-colors font-medium">Cart</Link>
-                        </div>
-
-                        <div className="hidden md:block flex-1 max-w-sm mx-8">
-                            <div className="relative group">
-                                <input
-                                    type="text"
-                                    className="w-full bg-white/5 border border-white/10 rounded-full py-2 px-4 pl-10 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all text-white placeholder-white/30"
-                                    placeholder="Search..."
-                                />
-                                <svg className="w-4 h-4 text-white/40 absolute left-3.5 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                </svg>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                            <Link href="/cart">
-                                <button className="p-2 hover:bg-white/10 rounded-full transition-colors relative">
-                                    <svg className="w-6 h-6 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                                    </svg>
-                                    {cartCount > 0 && (
-                                        <span className="absolute -top-1 -right-1 bg-purple-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[#0f0c29]">
-                                            {cartCount}
-                                        </span>
-                                    )}
-                                </button>
-                            </Link>
-
-                            <Link href="/profile">
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 p-[2px] cursor-pointer hover:shadow-lg hover:shadow-purple-500/30 transition-shadow">
-                                    <div className="w-full h-full rounded-full bg-[#0f0c29] flex items-center justify-center">
-                                        <span className="text-xs font-bold">
-                                            {user?.user_metadata?.full_name ? user.user_metadata.full_name.charAt(0) : 'U'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </Link>
-                        </div>
+                <Link href="/home" className="text-xl font-bold tracking-tight flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+                    <img src="/logo.png" alt="TYEUS Logo" className="w-7 h-7 rounded-sm shadow-sm" />
+                    <div>
+                        <span className="text-[#0066cc]">TY</span>
+                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#0066cc] to-[#00cc99]">EUS</span>
                     </div>
-                </div>
+                </Link>
+
+                <Link href="/cart" className="relative p-2 text-gray-600 -mr-2" aria-label="Cart">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    {cartCount > 0 && (
+                        <span className="absolute top-0 right-0 w-4 h-4 bg-orange-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
+                            {cartCount}
+                        </span>
+                    )}
+                </Link>
             </nav>
 
-            <main className="pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-
-                {/* Hero Section */}
-                <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-indigo-900 via-purple-900 to-pink-900 mb-12 shadow-2xl border border-white/10">
-                    <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-purple-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30"></div>
-                    <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 bg-blue-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30"></div>
-
-                    <div className="relative z-10 px-8 py-16 md:py-20 md:px-12 flex flex-col md:flex-row items-center justify-between">
-                        <div className="max-w-xl text-center md:text-left">
-                            <span className="inline-block py-1 px-3 rounded-full bg-white/10 border border-white/20 text-xs font-semibold tracking-wide text-purple-300 mb-4">NEW COLLECTION</span>
-                            <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6">Future Tech <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">Arrived Today</span></h1>
-                            <p className="text-lg text-white/70 mb-8 max-w-md mx-auto md:mx-0">Experience the next generation of gadgets with our exclusive holographic series.</p>
-                            <button
-                                onClick={scrollToProducts}
-                                className="px-8 py-3 bg-white text-purple-900 font-bold rounded-xl shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] transform hover:-translate-y-1 transition-all duration-300"
-                            >
-                                Explore Now
+            {/* Mobile Sidebar */}
+            {isMenuOpen && (
+                <div className="fixed inset-0 z-[60] flex">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setIsMenuOpen(false)}></div>
+                    <div className="relative w-64 bg-white h-full shadow-2xl flex flex-col pt-6 pb-8 animate-in slide-in-from-left duration-200">
+                        <div className="px-4 flex items-center justify-between mb-8">
+                            <Link href="/home" className="text-xl font-bold tracking-tight flex items-center gap-1.5 pl-2 hover:opacity-80 transition-opacity">
+                                <img src="/logo.png" alt="TYEUS Logo" className="w-7 h-7 rounded-sm shadow-sm" />
+                                <div>
+                                    <span className="text-[#0066cc]">TY</span>
+                                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#0066cc] to-[#00cc99]">EUS</span>
+                                </div>
+                            </Link>
+                            <button onClick={() => setIsMenuOpen(false)} className="text-gray-500 hover:text-gray-800 p-1.5 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors" aria-label="Close menu">
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
                             </button>
                         </div>
+                        <div className="flex flex-col px-3 gap-1">
+                            <Link href="/home" onClick={() => setIsMenuOpen(false)} className="px-4 py-3 rounded-xl text-gray-800 font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors flex items-center gap-3">
+                                <svg className="w-5 h-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                                </svg>
+                                Home
+                            </Link>
+                            <Link href="/product" onClick={() => setIsMenuOpen(false)} className="px-4 py-3 rounded-xl text-gray-800 font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors flex items-center gap-3">
+                                <svg className="w-5 h-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                                </svg>
+                                Products
+                            </Link>
+                            <Link href="/virtual-try-on" onClick={() => setIsMenuOpen(false)} className="px-4 py-3 rounded-xl text-gray-800 font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors flex items-center gap-3">
+                                <svg className="w-5 h-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                                Virtual Try-On
+                            </Link>
+                            <Link href="/profile" onClick={() => setIsMenuOpen(false)} className="px-4 py-3 rounded-xl text-gray-800 font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors flex items-center gap-3 mt-4 border border-gray-100 shadow-sm">
+                                <svg className="w-5 h-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                                Profile
+                            </Link>
 
-                        {/* Abstract 3D shape placeholder using CSS */}
-                        <div className="mt-12 md:mt-0 relative w-64 h-64 md:w-80 md:h-80 perspective-1000 animate-float">
-                            <div className="w-full h-full relative transform-style-3d rotate-y-12 rotate-x-12">
-                                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/40 to-pink-500/40 backdrop-blur-md rounded-3xl border border-white/30 transform translate-z-10"></div>
-                                <div className="absolute inset-0 bg-gradient-to-tl from-blue-500/40 to-cyan-500/40 backdrop-blur-md rounded-3xl border border-white/30 transform -translate-x-4 -translate-y-4 translate-z-0"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
+            )}
 
-                {/* Categories */}
-                <div className="flex gap-4 overflow-x-auto pb-8 scrollbar-hide">
-                    {['All Products', 'Electronics', 'Fashion', 'Gaming', 'Home'].map((cat, i) => (
-                        <button
-                            key={cat}
-                            onClick={() => setSelectedCategory(cat)}
-                            className={`px-6 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-all ${selectedCategory === cat ? 'bg-white text-black' : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/5'}`}
-                        >
-                            {cat}
-                        </button>
-                    ))}
+            {/* Search Bar */}
+            <div className="px-4 py-3 bg-white border-b border-gray-100 flex justify-center">
+                <div className="relative w-full max-w-lg">
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search for anything"
+                        className="w-full bg-white border-2 border-[#1a237e]/20 rounded-full py-3 px-5 pr-12 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#1a237e]/40 transition-colors"
+                    />
+                    <button className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-600">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </button>
                 </div>
+            </div>
 
-                {/* Product Grid */}
+            {/* Main Content */}
+            <main className="px-4 py-6 max-w-lg mx-auto md:max-w-7xl">
                 {loading ? (
                     <div className="flex justify-center items-center py-20">
-                        <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                 ) : filteredProducts.length === 0 ? (
-                    <div className="text-center py-20 text-white/50">
-                        <p className="text-xl">No products found in this category.</p>
-                        <p className="text-sm mt-2">Try selecting 'All Products' or check back later.</p>
+                    <div className="text-center py-20 text-gray-500">
+                        <p>No products found.</p>
                     </div>
                 ) : (
-                    <div id="product-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {filteredProducts.map((product) => (
-                            <div key={product.id} className="group bg-white/5 border border-white/10 rounded-2xl p-4 hover:bg-white/10 transition-all duration-300 hover:-translate-y-1">
-                                {/* Product Image Placeholder */}
-                                <div className={`h-64 rounded-xl bg-gradient-to-br ${product.color || 'from-gray-700 to-gray-900'} relative overflow-hidden mb-4 group-hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] transition-all`}>
-                                    <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-all"></div>
-                                    <button
-                                        onClick={() => toggleWishlist(product.id)}
-                                        className={`absolute top-3 right-3 p-2 backdrop-blur-md rounded-full transition-all ${wishlist.includes(product.id) ? 'bg-pink-500 text-white' : 'bg-black/20 text-white hover:bg-white hover:text-red-500'}`}
-                                    >
-                                        <svg className="w-5 h-5" fill={wishlist.includes(product.id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                                        </svg>
-                                    </button>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <h3 className="text-lg font-bold text-white group-hover:text-purple-300 transition-colors">{product.name}</h3>
-                                            <p className="text-sm text-white/50">{product.category}</p>
-                                        </div>
-                                        <span className="text-lg font-bold text-white">{product.price}</span>
+                            <div key={product.id} className="bg-white rounded-xl p-3 flex flex-col hover:shadow-lg transition-shadow border border-gray-100">
+                                <Link href={`/product/${product.id}`} className="block relative focus:outline-none h-full flex flex-col">
+                                    <div className="aspect-square rounded-xl bg-gray-50 mb-3 overflow-hidden flex items-center justify-center relative">
+                                        {(product.main_image || (product.images && product.images.length > 0)) ? (
+                                            <img src={product.main_image || product.images?.[0]} alt={product.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="w-full h-full bg-gray-200"></div>
+                                        )}
                                     </div>
-
-                                    <button
-                                        onClick={() => handleAddToCart(product)}
-                                        className="w-full py-2.5 mt-2 bg-white/10 hover:bg-white text-white hover:text-black font-medium rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                                        </svg>
-                                        Add to Cart
-                                    </button>
-                                </div>
+                                    <div className="flex flex-col flex-1 justify-between">
+                                        <h3 className="text-sm font-semibold text-gray-800 line-clamp-2 leading-snug mb-2">
+                                            {product.name}
+                                        </h3>
+                                        <div className="mt-auto">
+                                            <div className="inline-block border-2 border-orange-200/80 rounded-full px-3 py-1 bg-white">
+                                                <span className="text-[13px] font-extrabold text-[#1a237e]">${product.price}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Link>
                             </div>
                         ))}
                     </div>
                 )}
-
             </main>
 
-            {/* Floating Blobs for page bg */}
-            <div className="fixed top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
-                <div className="absolute top-[20%] left-[-10%] w-96 h-96 bg-purple-900/40 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-blob"></div>
-                <div className="absolute bottom-[-10%] right-[-5%] w-96 h-96 bg-blue-900/40 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-blob animation-delay-4000"></div>
+            {/* Bottom Navigation */}
+            <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 flex justify-around items-center py-3 px-2 z-50 md:hidden pb-safe">
+                <Link href="/home" className="flex flex-col items-center gap-1 text-orange-400">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    <span className="text-[11px] font-medium">Beranda</span>
+                </Link>
+                <Link href="/notifications" className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-400 transition-colors">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    <span className="text-[11px] font-medium">Notification</span>
+                </Link>
+                <Link href="/profile" className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-400 transition-colors">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span className="text-[11px] font-medium">Account</span>
+                </Link>
             </div>
 
+            {/* Desktop Navigation Links */}
+            <div className="hidden md:flex fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 justify-center gap-10 items-center py-4 px-2 z-50">
+                <Link href="/home" className="text-orange-400 font-bold hover:text-orange-500">Home</Link>
+                <Link href="/product" className="text-gray-600 font-medium hover:text-orange-400">Products</Link>
+                <Link href="/virtual-try-on" className="text-gray-600 font-medium hover:text-orange-400">Virtual Try-On</Link>
+                <Link href="/profile" className="text-gray-600 font-medium hover:text-orange-400">Profile</Link>
+            </div>
         </div>
     );
 }

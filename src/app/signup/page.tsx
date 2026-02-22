@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import toast from 'react-hot-toast';
 
 export default function SignupPage() {
     const router = useRouter();
@@ -37,7 +38,7 @@ export default function SignupPage() {
 
             if (error) throw error;
 
-            alert('Registration Successful! Please check your email to confirm.');
+            toast.success('Registration Successful! Please check your email to confirm.', { duration: 5000 });
             router.push('/');
 
         } catch (err) {

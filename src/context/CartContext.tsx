@@ -69,6 +69,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
                         product_id: item.product_id,
                         name: item.product.name,
                         price: item.product.price,
+                        image: item.product.main_image || (item.product.images && item.product.images[0]) || null,
                         color: item.product.color,
                         quantity: item.quantity
                     }));
@@ -124,6 +125,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
                         product_id: data.product_id,
                         name: data.product.name,
                         price: data.product.price,
+                        image: data.product.main_image || (data.product.images && data.product.images[0]) || null,
                         color: data.product.color,
                         quantity: data.quantity
                     };

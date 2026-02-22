@@ -76,8 +76,12 @@ export default function RequestTryOnPage() {
             <nav className="fixed top-0 w-full z-50 bg-[#0f0c29]/80 backdrop-blur-xl border-b border-white/10">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between h-16">
-                        <Link href="/home" className="flex-shrink-0 font-bold text-2xl tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600 mr-8">
-                            NEBULA<span className="text-white">STORE</span>
+                        <Link href="/home" className="flex items-center gap-2 flex-shrink-0 font-bold text-2xl tracking-tighter">
+                            <img src="/logo.png" alt="TYEUS Logo" className="w-8 h-8 rounded-sm shadow-sm" />
+                            <div>
+                                <span className="bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600">TYE</span>
+                                <span className="text-white">US</span>
+                            </div>
                         </Link>
                         <Link href="/home" className="text-sm text-white/70 hover:text-white transition-colors">
                             &larr; Back to Home

@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { Product, User, Order } from '@/types';
+import toast from 'react-hot-toast';
 
 export default function AdminDashboard() {
     const router = useRouter();
@@ -111,10 +112,10 @@ export default function AdminDashboard() {
 
             // Refresh products
             setProducts(products.map(p => p.id === productId ? { ...p, model_url: publicUrl } : p));
-            alert('Product model uploaded successfully!');
+            toast.success('Product model uploaded successfully!');
         } catch (err) {
             console.error('Upload failed:', err);
-            alert('Failed to upload product model.');
+            toast.error('Failed to upload product model.');
         } finally {
             setUploadingModel(null);
         }
@@ -130,6 +131,8 @@ export default function AdminDashboard() {
         const category = (form.elements.namedItem('edit-category') as HTMLSelectElement).value;
         const fileInput = form.elements.namedItem('edit-model') as HTMLInputElement;
         const file = fileInput.files?.[0];
+        const mainImageFile = (form.elements.namedItem('edit-main-image') as HTMLInputElement).files?.[0];
+        const imageFiles = (form.elements.namedItem('edit-images') as HTMLInputElement).files;
 
         try {
             let modelUrl = editingProduct.model_url;
@@ -157,22 +160,63 @@ export default function AdminDashboard() {
             // Determine color based on category (consistency with Add Product)
             const color = category === "Electronics" ? "from-blue-500 to-cyan-400" : "from-purple-500 to-pink-500";
 
+            let imageUrls = editingProduct.images || [];
+            if (imageFiles && imageFiles.length > 0) {
+                setUploadingModel(`img-p-${editingProduct.id}`);
+                const newUrls = [];
+                for (let i = 0; i < imageFiles.length; i++) {
+                    const imgFile = imageFiles[i];
+                    const fileExt = imgFile.name.split('.').pop();
+                    const fileName = `${editingProduct.id}-img-${Date.now()}-${i}.${fileExt}`;
+
+                    const { error: uploadError } = await supabase.storage
+                        .from('product-images')
+                        .upload(fileName, imgFile, { upsert: true });
+
+                    if (!uploadError) {
+                        const { data: { publicUrl } } = supabase.storage
+                            .from('product-images')
+                            .getPublicUrl(fileName);
+                        newUrls.push(publicUrl);
+                    }
+                }
+                imageUrls = [...imageUrls, ...newUrls];
+            }
+
+            let mainImageUrl = editingProduct.main_image;
+            if (mainImageFile) {
+                setUploadingModel(`main-img-p-${editingProduct.id}`);
+                const fileExt = mainImageFile.name.split('.').pop();
+                const fileName = `${editingProduct.id}-main-img-${Date.now()}.${fileExt}`;
+
+                const { error: uploadError } = await supabase.storage
+                    .from('product-images')
+                    .upload(fileName, mainImageFile, { upsert: true });
+
+                if (!uploadError) {
+                    const { data: { publicUrl } } = supabase.storage
+                        .from('product-images')
+                        .getPublicUrl(fileName);
+                    mainImageUrl = publicUrl;
+                }
+            }
+
             // Update Database
             const { error: updateError } = await supabase
                 .from('products')
-                .update({ name, price, category, model_url: modelUrl, color })
+                .update({ name, price, category, model_url: modelUrl, color, images: imageUrls, main_image: mainImageUrl })
                 .eq('id', editingProduct.id);
 
             if (updateError) throw new Error(`Database Error: ${updateError.message}`);
 
             // Update Local State
-            setProducts(products.map(p => p.id === editingProduct.id ? { ...p, name, price, category, model_url: modelUrl, color } : p));
+            setProducts(products.map(p => p.id === editingProduct.id ? { ...p, name, price, category, model_url: modelUrl, color, images: imageUrls, main_image: mainImageUrl } : p));
             setEditingProduct(null); // Close modal
-            alert('Product updated successfully!');
+            toast.success('Product updated successfully!');
 
         } catch (err) {
             console.error(err);
-            alert('Failed to update product: ' + (err instanceof Error ? err.message : 'Unknown error'));
+            toast.error('Failed to update product: ' + (err instanceof Error ? err.message : 'Unknown error'));
         } finally {
             setUploadingModel(null);
         }
@@ -215,10 +259,10 @@ export default function AdminDashboard() {
 
             // 4. Update local state
             setUsers(users.map(u => u.id === userId ? { ...u, model_url: publicUrl } : u));
-            alert('Model uploaded and assigned successfully!');
+            toast.success('Model uploaded and assigned successfully!');
 
         } catch (error) {
-            alert(error instanceof Error ? error.message : 'Unknown error occurred');
+            toast.error(error instanceof Error ? error.message : 'Unknown error occurred');
         } finally {
             setUploadingModel(null);
         }
@@ -249,10 +293,33 @@ export default function AdminDashboard() {
             if (data) {
                 setProducts([...products, data[0]]);
                 form.reset();
-                alert("Product Added Successfully!");
+                toast.success("Product Added Successfully!");
             }
         } catch (err) {
-            alert('Error adding product: ' + (err instanceof Error ? err.message : 'Unknown error'));
+            toast.error('Error adding product: ' + (err instanceof Error ? err.message : 'Unknown error'));
+        }
+    };
+
+    const handleToggleVisibility = async (product: Product) => {
+        try {
+            const newHiddenStatus = !product.is_hidden;
+
+            const { error } = await supabase
+                .from('products')
+                .update({ is_hidden: newHiddenStatus })
+                .eq('id', product.id);
+
+            if (error) {
+                if (error.code === '42703') { // Column does not exist
+                    toast.error('The "is_hidden" column does not exist in the database yet. Please run the product_hide_schema.sql script in your Supabase SQL Editor.', { duration: 6000 });
+                    return;
+                }
+                throw error;
+            }
+
+            setProducts(products.map(p => p.id === product.id ? { ...p, is_hidden: newHiddenStatus } : p));
+        } catch (err: any) {
+            toast.error('Error updating product visibility: ' + (err.message || 'Unknown error'));
         }
     };
 
@@ -260,17 +327,27 @@ export default function AdminDashboard() {
         if (confirm("Are you sure you want to delete this product?")) {
             try {
                 // Use Supabase client directly to leverage the user's session for RLS
+                // 1. Delete associated cart items first to avoid FK constraint issues there
+                await supabase.from('cart').delete().eq('product_id', id);
+
+                // 2. Attempt to delete the product
                 const { error } = await supabase
                     .from('products')
                     .delete()
                     .eq('id', id);
 
-                if (error) throw error;
+                if (error) {
+                    if (error.code === '23503') {
+                        throw new Error('This product cannot be deleted because it is part of existing customer orders.');
+                    }
+                    throw new Error(error.message || 'Database error occurred');
+                }
 
                 // Update local state
                 setProducts(products.filter(p => p.id !== id));
-            } catch (err) {
-                alert('Error deleting product: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                toast.success('Product deleted.');
+            } catch (err: any) {
+                toast.error('Error deleting product: ' + (err.message || 'Unknown error'));
             }
         }
     };
@@ -280,7 +357,7 @@ export default function AdminDashboard() {
             const { data: { session } } = await supabase.auth.getSession();
 
             if (!session) {
-                alert('Debug: No active session found in supabase client! Please refresh the page.');
+                toast.error('Debug: No active session found in supabase client! Please refresh the page.');
                 return;
             }
 
@@ -303,10 +380,10 @@ export default function AdminDashboard() {
 
             // Update local state
             setOrders(orders.map(o => o.id === orderId ? { ...o, status: newStatus as Order['status'] } : o));
-            alert('Order status updated successfully');
+            toast.success('Order status updated successfully');
         } catch (err) {
             console.error(err);
-            alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            toast.error(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
     };
 
@@ -362,6 +439,30 @@ export default function AdminDashboard() {
                                             </div>
                                         </div>
 
+                                        <div>
+                                            <label className="block text-xs text-white/40 mb-1">Update Main Image (Homepage Front Image)</label>
+                                            <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-xl p-3">
+                                                {editingProduct.main_image ? (
+                                                    <img src={editingProduct.main_image} alt="Main" className="w-10 h-10 object-cover rounded" />
+                                                ) : (
+                                                    <span className="text-white/40 text-xs">No main image set</span>
+                                                )}
+                                                <input name="edit-main-image" type="file" accept="image/*" className="text-xs text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500" />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs text-white/40 mb-1">Add Images (Gallery)</label>
+                                            <input name="edit-images" type="file" multiple accept="image/*" className="text-xs text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500" />
+                                            {editingProduct.images && editingProduct.images.length > 0 && (
+                                                <div className="mt-2 flex gap-2 overflow-x-auto">
+                                                    {editingProduct.images.map((img: string, i: number) => (
+                                                        <img key={i} src={img} alt="Product img" className="w-12 h-12 object-cover rounded" />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
                                         <div className="flex justify-end gap-3 pt-4">
                                             <button type="button" onClick={() => setEditingProduct(null)} className="px-5 py-2 rounded-xl text-white/60 hover:bg-white/5 transition-colors">Cancel</button>
                                             <button type="submit" disabled={!!uploadingModel} className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl shadow-lg transition-all">
@@ -399,6 +500,7 @@ export default function AdminDashboard() {
                                         <th className="px-6 py-4">Name</th>
                                         <th className="px-6 py-4">Category</th>
                                         <th className="px-6 py-4">Price</th>
+                                        <th className="px-6 py-4">Status</th>
                                         <th className="px-6 py-4">Actions</th>
                                     </tr>
                                 </thead>
@@ -410,7 +512,30 @@ export default function AdminDashboard() {
                                             <td className="px-6 py-4 text-white/70">{p.category}</td>
                                             <td className="px-6 py-4 font-mono text-green-400">{p.price}</td>
                                             <td className="px-6 py-4">
+                                                {p.is_hidden ? (
+                                                    <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-[10px] font-bold uppercase border border-gray-500/20">Hidden</span>
+                                                ) : (
+                                                    <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-[10px] font-bold uppercase border border-green-500/20">Visible</span>
+                                                )}
+                                            </td>
+                                            <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2">
+                                                    <button
+                                                        onClick={() => handleToggleVisibility(p)}
+                                                        className={`p-2 rounded transition-all ${p.is_hidden ? 'text-gray-400 hover:text-white hover:bg-gray-500/20' : 'text-purple-400 hover:text-purple-300 hover:bg-purple-500/10'}`}
+                                                        title={p.is_hidden ? "Show Product" : "Hide Product"}
+                                                    >
+                                                        {p.is_hidden ? (
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                                                            </svg>
+                                                        ) : (
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                            </svg>
+                                                        )}
+                                                    </button>
                                                     <button
                                                         onClick={() => setEditingProduct(p)}
                                                         className="px-3 py-1.5 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded text-xs font-medium border border-blue-500/20 transition-all"
@@ -619,9 +744,13 @@ export default function AdminDashboard() {
             {/* Sidebar content remains mostly same but better structured */}
             <aside className="w-64 bg-[#1a163b] border-r border-white/10 hidden md:flex flex-col sticky top-0 h-screen">
                 <div className="p-6 border-b border-white/10">
-                    <div className="font-bold text-2xl tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600">
-                        NEBULA<span className="text-white">ADMIN</span>
-                    </div>
+                    <Link href="/home" className="font-bold text-2xl tracking-tighter flex items-center gap-2 hover:opacity-80 transition-opacity">
+                        <img src="/logo.png" alt="TYEUS Logo" className="w-8 h-8 rounded-sm shadow-sm" />
+                        <div>
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600">TYE</span>
+                            <span className="text-white">US</span>
+                        </div>
+                    </Link>
                 </div>
 
                 <nav className="flex-1 p-4 space-y-2">

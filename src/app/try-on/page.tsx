@@ -5,6 +5,7 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls, ContactShadows, useGLTF } from '@react-three/drei'
 import { supabase } from '@/lib/supabaseClient'
 import { Product } from '@/types'
+import { useRouter } from 'next/navigation'
 
 // Error Boundary for 3D Components
 class ModelErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode }, { hasError: boolean }> {
@@ -75,32 +76,52 @@ export default function TryOnScene() {
     const [loading, setLoading] = useState(true);
     const [userModelUrl, setUserModelUrl] = useState<string | undefined>(undefined);
 
+    const router = useRouter();
+
     useEffect(() => {
         const fetchData = async () => {
-            // 1. Fetch Products
-            const { data: productData } = await supabase.from('products').select('*');
-            if (productData) {
-                setProducts(productData);
-            }
-
-            // 2. Fetch User & Custom Model
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data: userData } = await supabase
-                    .from('users')
-                    .select('model_url')
-                    .eq('id', user.id)
-                    .single();
-
-                if (userData?.model_url) {
-                    setUserModelUrl(userData.model_url);
+            try {
+                // 1. Fetch Products
+                const { data: productData } = await supabase.from('products').select('*');
+                if (productData) {
+                    setProducts(productData.filter((p: any) => !p.is_hidden));
                 }
-            }
 
-            setLoading(false);
+                // 2. Fetch User & Custom Model
+                const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+                if (authError) {
+                    if (authError.message.includes("Refresh Token")) {
+                        await supabase.auth.signOut();
+                        router.push('/login');
+                        return;
+                    }
+                }
+
+                if (user) {
+                    const { data: userData } = await supabase
+                        .from('users')
+                        .select('model_url')
+                        .eq('id', user.id)
+                        .single();
+
+                    if (userData?.model_url) {
+                        setUserModelUrl(userData.model_url);
+                    }
+                }
+
+                setLoading(false);
+            } catch (err: any) {
+                console.error("Error fetching data:", err);
+                if (err?.message?.includes("Refresh Token")) {
+                    await supabase.auth.signOut();
+                    router.push('/login');
+                }
+                setLoading(false);
+            }
         };
         fetchData();
-    }, []);
+    }, [router]);
 
     const handleProductSelect = (product: Product) => {
         if (selectedProduct?.id === product.id) {
@@ -125,8 +146,8 @@ export default function TryOnScene() {
                                 key={product.id}
                                 onClick={() => handleProductSelect(product)}
                                 className={`w-full p-4 rounded-xl text-left transition-all border-2 ${selectedProduct?.id === product.id
-                                        ? 'border-purple-600 bg-purple-50 shadow-md'
-                                        : 'border-transparent bg-gray-100 hover:bg-gray-200'
+                                    ? 'border-purple-600 bg-purple-50 shadow-md'
+                                    : 'border-transparent bg-gray-100 hover:bg-gray-200'
                                     }`}
                             >
                                 <div className="font-bold text-gray-800">{product.name}</div>
