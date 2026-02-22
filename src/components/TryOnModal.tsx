@@ -14,6 +14,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
     const [resultImageUrl, setResultImageUrl] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loadingExisting, setLoadingExisting] = useState(false);
+    const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -49,6 +50,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
             setUserPhotoFile(null);
             setResultImageUrl(null);
             setError(null);
+            setStatusMessage(null);
         }
     }, [isOpen]);
 
@@ -69,6 +71,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
         setGenerating(true);
         setError(null);
+        setStatusMessage("Initializing AI...");
 
         try {
             // 1. Prepare User Photo
@@ -87,44 +90,67 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
             if (!productRes.ok) throw new Error("Failed to fetch product image");
             const productBlob = await productRes.blob();
 
-            // 3. Import Gradio Client dynamically (frontend works better for long tasks)
+            // 3. Import Gradio Client dynamically
             const { client } = await import('@gradio/client');
 
-            console.log("Connecting directly to Hugging Face Space...");
-            // Notice: Using the public Space directly helps bypass Vercel server limits
+            setStatusMessage("Connecting to Hugging Face...");
             const app = await client('yisol/IDM-VTON');
 
-            console.log("Connected! Generating image in your browser (no timeout)...");
+            // 4. Run the Prediction using .submit() to track queue
+            return new Promise((resolve, reject) => {
+                const submission = app.submit('/tryon', {
+                    dict: {
+                        background: humanBlob,
+                        layers: [],
+                        composite: null
+                    },
+                    garm_img: productBlob,
+                    garment_des: 'A natural high-quality photorealistic garment on a human body',
+                    is_checked: true,
+                    is_checked_crop: false,
+                    denoise_steps: 30,
+                    seed: 42
+                });
 
-            // 4. Run the Prediction directly (High Fidelity Mode)
-            const result = await app.predict('/tryon', {
-                dict: {
-                    background: humanBlob,
-                    layers: [],
-                    composite: null
-                },
-                garm_img: productBlob,
-                // Use a realistic description for natural texture preservation
-                garment_des: 'A natural high-quality photorealistic garment on a human body',
-                is_checked: true,
-                is_checked_crop: false,
-                denoise_steps: 30, // Reduced from 50 back to 30 to prevent Space timeouts
-                seed: 42
+                submission.on('status', (status) => {
+                    if (status.stage === 'pending') {
+                        setStatusMessage(`Queue Position: ${status.position || 0}/${status.size || '?'}`);
+                    } else if (status.stage === 'error') {
+                        reject(new Error("The AI Space is overloaded. Please try again in 1-2 minutes."));
+                    } else if (status.stage === 'complete') {
+                        // handled in data event
+                    } else {
+                        setStatusMessage("Processing Image...");
+                    }
+                });
+
+                submission.on('data', (data) => {
+                    const outputData: any = data.data;
+                    const finalImageUrl = outputData?.[0]?.url || null;
+                    if (finalImageUrl) {
+                        setResultImageUrl(finalImageUrl);
+                        resolve(finalImageUrl);
+                    } else {
+                        reject(new Error("AI finished but returned no image."));
+                    }
+                });
+
+                submission.on('error', (err) => {
+                    reject(err);
+                });
             });
 
-            const outputData: any = result.data;
-            const finalImageUrl = outputData?.[0]?.url || null;
-
-            if (!finalImageUrl) {
-                throw new Error("AI did not return an image. The Hugging Face Space might be overloaded or asleep.");
-            }
-
-            setResultImageUrl(finalImageUrl);
-        } catch (err) {
+        } catch (err: any) {
             console.error("TRY-ON ERROR:", err);
-            setError(err instanceof Error ? err.message : 'The Hugging Face AI Space is currently busy or overloaded. Please wait 1-2 minutes and try again.');
+            const msg = (err.message || '').toLowerCase();
+            if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('pending')) {
+                setError("The AI Space is currently busy. Please wait 1-2 minutes and try again.");
+            } else {
+                setError(err instanceof Error ? err.message : 'Something went wrong with the AI Space.');
+            }
         } finally {
             setGenerating(false);
+            setStatusMessage(null);
         }
     };
 
@@ -150,10 +176,12 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                         <div className="relative w-full aspect-[3/4] max-w-sm rounded-2xl overflow-hidden border-2 border-purple-500/30 group">
                             <img src={userPhotoUrl} alt="User" className="w-full h-full object-cover" />
                             {generating && (
-                                <div className="absolute inset-0 bg-purple-900/40 backdrop-blur-sm flex flex-col items-center justify-center">
+                                <div className="absolute inset-0 bg-purple-900/40 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center">
                                     {/* Scanning Animation */}
                                     <div className="absolute top-0 left-0 w-full h-1 bg-neon-cyan shadow-[0_0_15px_#0ff] animate-scan"></div>
-                                    <div className="text-white font-bold tracking-widest uppercase animate-pulse">Running AI Model...</div>
+                                    <div className="text-white font-bold tracking-widest uppercase animate-pulse text-xs">
+                                        {statusMessage || "Running AI Model..."}
+                                    </div>
                                 </div>
                             )}
                             <button
@@ -212,9 +240,11 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                                     <p className="text-white/60 font-bold animate-pulse text-sm uppercase tracking-widest">Loading Avatar...</p>
                                 </div>
                             ) : generating ? (
-                                <div className="z-10 text-center">
+                                <div className="z-10 text-center p-4">
                                     <div className="w-16 h-16 border-4 border-purple-500 border-t-pink-500 rounded-full animate-spin mx-auto mb-4 shadow-[0_0_15px_#d946ef]"></div>
-                                    <p className="text-white font-bold animate-pulse text-sm uppercase tracking-widest">Generating Asset...</p>
+                                    <p className="text-white font-bold animate-pulse text-xs uppercase tracking-widest leading-relaxed">
+                                        {statusMessage || "Generating Asset..."}
+                                    </p>
                                 </div>
                             ) : (
                                 <div className="z-10 text-center px-6">
