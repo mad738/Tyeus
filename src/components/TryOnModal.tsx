@@ -108,7 +108,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                 garment_des: 'A natural high-quality photorealistic garment on a human body',
                 is_checked: true,
                 is_checked_crop: false,
-                denoise_steps: 50, // Higher steps = more natural texture preservation
+                denoise_steps: 30, // Reduced from 50 back to 30 to prevent Space timeouts
                 seed: 42
             });
 
@@ -116,13 +116,13 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
             const finalImageUrl = outputData?.[0]?.url || null;
 
             if (!finalImageUrl) {
-                throw new Error("AI did not return an image. The Space might be overloaded.");
+                throw new Error("AI did not return an image. The Hugging Face Space might be overloaded or asleep.");
             }
 
             setResultImageUrl(finalImageUrl);
         } catch (err) {
-            console.error(err);
-            setError(err instanceof Error ? err.message : 'An error occurred. Please try again in a few moments.');
+            console.error("TRY-ON ERROR:", err);
+            setError(err instanceof Error ? err.message : 'The Hugging Face AI Space is currently busy or overloaded. Please wait 1-2 minutes and try again.');
         } finally {
             setGenerating(false);
         }
