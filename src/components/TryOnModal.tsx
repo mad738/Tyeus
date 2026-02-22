@@ -71,41 +71,57 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
         setError(null);
 
         try {
-            const formData = new FormData();
-
-            // 1. Prepare User Photo (image1)
+            // 1. Prepare User Photo
+            let humanBlob: Blob;
             if (userPhotoFile) {
-                formData.append('image1', userPhotoFile);
+                humanBlob = userPhotoFile;
             } else if (userPhotoUrl) {
                 const userRes = await fetch(userPhotoUrl);
-                const userBlob = await userRes.blob();
-                formData.append('image1', userBlob, 'user_photo.jpg');
+                humanBlob = await userRes.blob();
+            } else {
+                throw new Error("No user photo found");
             }
 
-            // 2. Prepare Product Photo (image2)
-            // We need to fetch the product image and convert it to a blob for the API
+            // 2. Prepare Product Photo
             const productRes = await fetch(productImageUrl);
-            if (!productRes.ok) throw new Error("Failed to fetch product image for try-on");
+            if (!productRes.ok) throw new Error("Failed to fetch product image");
             const productBlob = await productRes.blob();
-            formData.append('image2', productBlob, 'product_photo.jpg');
 
-            // 3. Call the Production Try-On API Route
-            const res = await fetch('/api/try-on', {
-                method: 'POST',
-                body: formData,
+            // 3. Import Gradio Client dynamically (frontend works better for long tasks)
+            const { client } = await import('@gradio/client');
+
+            console.log("Connecting directly to Hugging Face Space...");
+            // Notice: Using the public Space directly helps bypass Vercel server limits
+            const app = await client('yisol/IDM-VTON');
+
+            console.log("Connected! Generating image in your browser (no timeout)...");
+
+            // 4. Run the Prediction directly
+            const result = await app.predict('/tryon', {
+                dict: {
+                    background: humanBlob,
+                    layers: [],
+                    composite: null
+                },
+                garm_img: productBlob,
+                garment_des: 'shirt',
+                is_checked: true,
+                is_checked_crop: false,
+                denoise_steps: 30,
+                seed: 42
             });
 
-            const data = await res.json();
+            const outputData: any = result.data;
+            const finalImageUrl = outputData?.[0]?.url || null;
 
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to generate image');
+            if (!finalImageUrl) {
+                throw new Error("AI did not return an image. The Space might be overloaded.");
             }
 
-            // The new API returns { success: true, imageUrl: "..." }
-            setResultImageUrl(data.imageUrl);
+            setResultImageUrl(finalImageUrl);
         } catch (err) {
             console.error(err);
-            setError(err instanceof Error ? err.message : 'An error occurred during generation.');
+            setError(err instanceof Error ? err.message : 'An error occurred. Please try again in a few moments.');
         } finally {
             setGenerating(false);
         }
