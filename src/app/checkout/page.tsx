@@ -57,6 +57,8 @@ export default function CheckoutPage() {
             return;
         }
 
+        const WHATSAPP_NUMBER = "916301612645"; // TODO: Replace with actual business WhatsApp number
+
         setLoading(true);
         try {
             const { data: { session } } = await supabase.auth.getSession();
@@ -91,8 +93,30 @@ export default function CheckoutPage() {
 
             // Success
             await clearCart();
-            toast.success('Order Placed Successfully!');
-            router.push('/orders');
+
+            // Construct WhatsApp Message
+            const orderSummary = items.map(item =>
+                `• ${item.name} (Qty: ${item.quantity}) - ${item.price}`
+            ).join('\n');
+
+            const message = `*New Order Placed! (Order ID: ${result.orderId})*\n\n` +
+                `*Customer Details:*\n` +
+                `Name: ${formData.name}\n` +
+                `Phone: ${formData.phone}\n` +
+                `Address: ${formData.address}, ${formData.area}\n` +
+                `City: ${formData.city}, ${formData.state} - ${formData.pincode}\n` +
+                `Landmark: ${formData.landmark || 'N/A'}\n\n` +
+                `*Items:*\n${orderSummary}\n\n` +
+                `*Total Amount: $${cartTotal.toFixed(2)}*`;
+
+            const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+
+            toast.success('Order Placed Successfully! Redirecting to WhatsApp...');
+
+            // Small delay to let the toast show up
+            setTimeout(() => {
+                window.location.href = whatsappUrl;
+            }, 1000);
 
         } catch (error) {
             console.error('Checkout Error:', error);

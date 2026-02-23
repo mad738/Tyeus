@@ -71,15 +71,20 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
         setGenerating(true);
         setError(null);
-        setStatusMessage("Initializing AI...");
+        setStatusMessage("Initializing IDM-VTON Engine...");
 
-        // List of IDM-VTON spaces to try in order (Fallbacks)
+        // List of VERIFIED Running IDM-VTON spaces as fallbacks
+        // We shuffle these to spread the load and find an available server faster
         const spaces = [
             'yisol/IDM-VTON',
-            'AI-Platform/IDM-VTON',
-            'jjlealse/IDM-VTON',
-            'yisol/IDM-VTON-DC'
-        ];
+            'Nymbo/IDM-VTON',
+            'youplala/IDM-VTON',
+            'naykaitoon88/IDM-VTON',
+            'ronniechoyy/IDM-VTON-20250428',
+            'nami0342/GEN10_IDM-VTON_Base',
+            'emrekoc/yisol-IDM-VTON',
+            'mj151/yisol-IDM-VTON'
+        ].sort(() => Math.random() - 0.5);
 
         try {
             // 1. Prepare User Photo
@@ -105,72 +110,60 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
             for (const space of spaces) {
                 try {
-                    setStatusMessage(`Connecting to Server: ${space.split('/')[0]}...`);
-                    // Timeout the connection attempt after 15 seconds
+                    setStatusMessage(`Scanning Server: ${space.split('/')[0]}...`);
+
                     const app = await Promise.race([
                         client(space),
                         new Promise((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 15000))
                     ]) as any;
 
-                    setStatusMessage(`Joined Queue on ${space.split('/')[0]}`);
+                    setStatusMessage(`Processing on ${space.split('/')[0]}...`);
 
-                    // 4. Run the Prediction
-                    await new Promise((resolve, reject) => {
-                        const submission: any = app.submit('/tryon', {
+                    // 4. Run the Prediction with a 2-minute total timeout
+                    const result = await Promise.race([
+                        app.predict('/tryon', {
                             dict: { background: humanBlob, layers: [], composite: null },
                             garm_img: productBlob,
                             garment_des: 'A natural high-quality photorealistic garment on a human body',
                             is_checked: true,
-                            is_checked_crop: false,
+                            is_checked_crop: true,
                             denoise_steps: 30,
                             seed: 42
-                        });
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("Processing Timeout")), 120000))
+                    ]) as any;
 
-                        submission.on('status', (status: any) => {
-                            if (status.stage === 'pending') {
-                                setStatusMessage(`Queue: ${status.position || 0}/${status.size || '?'}`);
-                            } else if (status.stage === 'error') {
-                                reject(new Error("Space busy. Trying fallback..."));
-                            } else {
-                                setStatusMessage(`Processing on ${space.split('/')[0]}...`);
-                            }
-                        });
+                    const outputData: any = result.data;
+                    const finalImageUrl = outputData?.[0]?.url || null;
 
-                        submission.on('data', (data: any) => {
-                            const finalImageUrl = data.data?.[0]?.url || null;
-                            if (finalImageUrl) {
-                                setResultImageUrl(finalImageUrl);
-                                resolve(finalImageUrl);
-                            } else {
-                                reject(new Error("No image generated."));
-                            }
-                        });
-
-                        submission.on('error', (err: any) => reject(err));
-                    });
-
-                    // If we reach here, we succeeded!
-                    setGenerating(false);
-                    setStatusMessage(null);
-                    return;
+                    if (finalImageUrl) {
+                        setResultImageUrl(finalImageUrl);
+                        setGenerating(false);
+                        setStatusMessage(null);
+                        return; // Success!
+                    } else {
+                        throw new Error("No image generated.");
+                    }
 
                 } catch (spaceErr) {
-                    console.warn(`Space ${space} failed:`, spaceErr);
+                    console.warn(`Server ${space} failed or timed out:`, spaceErr);
                     lastError = spaceErr;
-                    // Continue to next space in loop
+                    // Move to next space if this one timed out or failed
+                    setStatusMessage(`Server slow. Trying fallback node...`);
+                    await new Promise(r => setTimeout(r, 1000)); // Small pause before next try
                 }
             }
 
             // If we've exhausted all spaces
-            throw lastError || new Error("All AI servers are currently busy.");
+            throw lastError || new Error("All AI processing nodes are currently busy.");
 
         } catch (err: any) {
-            console.error("TRY-ON GLOBAL ERROR:", err);
+            console.error("GLOBAL TRY-ON ERROR:", err);
             const msg = (err.message || '').toLowerCase();
-            if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('queue') || msg.includes('quota')) {
-                setError("All AI servers are currently at capacity. This is normal for the free tier. Please wait 1-2 minutes and click Initiate again.");
+            if (msg.includes('busy') || msg.includes('overloaded') || msg.includes('timeout')) {
+                setError("All AI servers are heavily loaded. Please wait 2 minutes and click Initiate Link again.");
             } else {
-                setError(`Connection Error: ${err.message || "Something went wrong"}. Please try again.`);
+                setError(`Link Failed: ${err.message || "An unexpected error occurred"}.`);
             }
             setGenerating(false);
             setStatusMessage(null);
@@ -200,10 +193,9 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                             <img src={userPhotoUrl} alt="User" className="w-full h-full object-cover" />
                             {generating && (
                                 <div className="absolute inset-0 bg-purple-900/40 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center">
-                                    {/* Scanning Animation */}
                                     <div className="absolute top-0 left-0 w-full h-1 bg-neon-cyan shadow-[0_0_15px_#0ff] animate-scan"></div>
                                     <div className="text-white font-bold tracking-widest uppercase animate-pulse text-xs">
-                                        {statusMessage || "Running Engine..."}
+                                        {statusMessage || "Syncing Engine..."}
                                     </div>
                                 </div>
                             )}
@@ -252,7 +244,6 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                         </div>
                     ) : (
                         <div className="w-full aspect-[3/4] max-w-sm rounded-2xl border border-white/5 bg-black/40 flex flex-col items-center justify-center relative overflow-hidden">
-                            {/* Garment Preview Overlay */}
                             <div className="absolute inset-0 opacity-20 filter blur-sm">
                                 {productImageUrl && <img src={productImageUrl} alt="Garment" className="w-full h-full object-cover" />}
                             </div>
@@ -265,19 +256,19 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                             ) : generating ? (
                                 <div className="z-10 text-center p-4">
                                     <div className="w-16 h-16 border-4 border-purple-500 border-t-pink-500 rounded-full animate-spin mx-auto mb-4 shadow-[0_0_15px_#d946ef]"></div>
-                                    <p className="text-white font-bold animate-pulse text-xs uppercase tracking-widest leading-relaxed">
-                                        {statusMessage || "Generating Asset..."}
+                                    <p className="text-white font-bold animate-pulse text-xs uppercase tracking-widest leading-relaxed text-center">
+                                        {statusMessage || "Syncing Engine..."}
                                     </p>
                                 </div>
                             ) : (
                                 <div className="z-10 text-center px-6">
-                                    <p className="text-white/40 text-sm mb-6">Upload your photo to see this item equipped using IDM-VTON Engine.</p>
+                                    <p className="text-white/40 text-sm mb-6 font-medium text-center">Connect to the IDM-VTON Engine to virtually equip this item.</p>
                                     <button
                                         onClick={handleTryOn}
-                                        disabled={!userPhotoFile && !userPhotoUrl}
+                                        disabled={!userPhotoFile && !userPhotoUrl || generating}
                                         className="legendary-btn px-8 py-3 rounded-xl text-white font-bold uppercase tracking-wider text-sm disabled:opacity-50 disabled:grayscale transition-all hover:scale-105"
                                     >
-                                        Initiate Try-On
+                                        {generating ? 'Linking...' : 'Initiate Link'}
                                     </button>
                                 </div>
                             )}
@@ -286,7 +277,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
 
                     {error && (
                         <div className="mt-4 p-3 bg-red-900/50 border border-red-500/50 rounded-lg text-red-200 text-sm text-center w-full max-w-sm backdrop-blur-md">
-                            <span className="font-bold mr-2">SYS_ERR:</span> {error}
+                            <span className="font-bold mr-2 text-xs text-red-300 tracking-wider">SYNC_FAILED:</span> <span className="text-xs text-red-100">{error}</span>
                         </div>
                     )}
                 </div>
