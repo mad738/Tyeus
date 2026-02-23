@@ -124,10 +124,10 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                         app.predict('/tryon', {
                             dict: { background: humanBlob, layers: [], composite: null },
                             garm_img: productBlob,
-                            garment_des: 'A natural high-quality photorealistic garment on a human body',
+                            garment_des: 'A high-quality photorealistic garment naturally fitted on the human body, strictly preserving the original human body shape and proportions.',
                             is_checked: true,
                             is_checked_crop: true,
-                            denoise_steps: 30,
+                            denoise_steps: 40,
                             seed: 42
                         }),
                         new Promise((_, reject) => setTimeout(() => reject(new Error("Processing Timeout")), 120000))
