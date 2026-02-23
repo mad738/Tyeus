@@ -57,7 +57,7 @@ export default function CheckoutPage() {
             return;
         }
 
-        const WHATSAPP_NUMBER = "916301612645"; // TODO: Replace with actual business WhatsApp number
+        const WHATSAPP_NUMBER = "916301612645";
 
         setLoading(true);
         try {

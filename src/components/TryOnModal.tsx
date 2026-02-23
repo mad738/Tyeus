@@ -38,7 +38,7 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                         }
                     }
                 } catch (err) {
-                    console.error('Error fetching existing photo:', err);
+                    // Fail silently for pre-loading photo
                 } finally {
                     setLoadingExisting(false);
                 }
@@ -146,7 +146,6 @@ export default function TryOnModal({ isOpen, onClose, productImageUrl }: TryOnMo
                     }
 
                 } catch (spaceErr) {
-                    console.warn(`Server ${space} failed or timed out:`, spaceErr);
                     lastError = spaceErr;
                     // Move to next space if this one timed out or failed
                     setStatusMessage(`Server slow. Trying fallback node...`);
